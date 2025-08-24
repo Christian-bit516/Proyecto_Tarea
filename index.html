@@ -593,99 +593,102 @@
         }
 
         // Función para dibujar mascarilla con rayitos y puntos
+        // <-- REEMPLAZADA: ahora dibuja puntos en todos los landmarks y usa las conexiones oficiales de MediaPipe -->
         function drawFacialMask(landmarks, ctx) {
             if (!landmarks) return;
-            
-            // Puntos clave para la mascarilla
-            const noseTip = landmarks[1];
-            const chin = landmarks[152];
-            const leftCheek = landmarks[234];
-            const rightCheek = landmarks[454];
-            
-            // Calcular dimensiones
-            const maskWidth = Math.abs(rightCheek.x - leftCheek.x) * 1.8;
-            const maskHeight = Math.abs(chin.y - noseTip.y) * 2.2;
-            const centerX = (leftCheek.x + rightCheek.x) / 2;
-            const centerY = (noseTip.y + chin.y) / 2;
-            
+
+            // Asegurarnos de que el canvas coincide con el tamaño actual del video
+            // (video puede tardar en cargar; si videoElement.videoWidth==0 usamos boundingClient)
+            const vW = videoElement.videoWidth || videoElement.getBoundingClientRect().width;
+            const vH = videoElement.videoHeight || videoElement.getBoundingClientRect().height;
+            if (faceCanvas.width !== vW || faceCanvas.height !== vH) {
+                faceCanvas.width = vW;
+                faceCanvas.height = vH;
+            }
+
             // Limpiar canvas
             ctx.clearRect(0, 0, faceCanvas.width, faceCanvas.height);
-            
-            // Base de la mascarilla
-            ctx.fillStyle = 'rgba(79, 195, 247, 0.7)';
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-            ctx.lineWidth = 2;
-            
-            // Forma de la mascarilla
-            ctx.beginPath();
-            ctx.ellipse(
-                centerX * faceCanvas.width,
-                centerY * faceCanvas.height,
-                maskWidth * faceCanvas.width / 2,
-                maskHeight * faceCanvas.height / 2,
-                0, 0, 2 * Math.PI
-            );
-            ctx.fill();
-            ctx.stroke();
-            
-            // Rayitos horizontales (pliegues)
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([5, 3]);
-            
-            for (let i = 1; i <= 3; i++) {
-                const y = centerY * faceCanvas.height + (i - 2) * (maskHeight * faceCanvas.height / 4);
+
+            // Dibujar puntos de landmarks (más visibles, tamaño 2)
+            ctx.fillStyle = 'rgba(0, 230, 255, 0.95)';
+            for (let i = 0; i < landmarks.length; i++) {
+                const x = landmarks[i].x * faceCanvas.width;
+                const y = landmarks[i].y * faceCanvas.height;
                 ctx.beginPath();
-                ctx.ellipse(
-                    centerX * faceCanvas.width,
-                    y,
-                    maskWidth * faceCanvas.width / 2 * 0.9,
-                    maskHeight * faceCanvas.height / 8,
-                    0, 0, 2 * Math.PI
-                );
-                ctx.stroke();
-            }
-            
-            ctx.setLineDash([]);
-            
-            // Puntos decorativos
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-            
-            // Puntos en los bordes
-            for (let i = 0; i < 12; i++) {
-                const angle = (i / 12) * Math.PI * 2;
-                const pointX = centerX * faceCanvas.width + Math.cos(angle) * maskWidth * faceCanvas.width / 2 * 0.9;
-                const pointY = centerY * faceCanvas.height + Math.sin(angle) * maskHeight * faceCanvas.height / 2 * 0.9;
-                
-                ctx.beginPath();
-                ctx.arc(pointX, pointY, 2, 0, Math.PI * 2);
+                ctx.arc(x, y, 2, 0, Math.PI * 2);
                 ctx.fill();
             }
-            
-            // Puntos alrededor de la nariz
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-            for (let i = 0; i < 8; i++) {
-                const angle = (i / 8) * Math.PI * 2;
-                const pointX = noseTip.x * faceCanvas.width + Math.cos(angle) * 15;
-                const pointY = noseTip.y * faceCanvas.height + Math.sin(angle) * 10;
-                
+
+            // Usar las utilidades de dibujo de MediaPipe para dibujar conexiones "máscara"
+            // drawConnectors está disponible desde drawing_utils.js
+            // Dibujamos varias capas: tesselation (malla), ovalo cara, ojos y labios para una forma de máscara realista
+            try {
+                // Malla ligera (suave)
+                drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, {color: 'rgba(0,200,255,0.12)', lineWidth: 0.8});
+
+                // Contorno de la cara (oval)
+                drawConnectors(ctx, landmarks, FACEMESH_FACE_OVAL, {color: 'rgba(0,200,255,0.6)', lineWidth: 1.4});
+
+                // Ojos (derecho e izquierdo)
+                drawConnectors(ctx, landmarks, FACEMESH_RIGHT_EYE, {color: 'rgba(0,255,150,0.9)', lineWidth: 1.2});
+                drawConnectors(ctx, landmarks, FACEMESH_LEFT_EYE, {color: 'rgba(0,255,150,0.9)', lineWidth: 1.2});
+
+                // Labios
+                drawConnectors(ctx, landmarks, FACEMESH_LIPS, {color: 'rgba(255,180,180,0.9)', lineWidth: 1.2});
+
+                // Nariz (algunos puntos centrales)
+                // Dibujar linea central de la nariz (usando índices centrales)
+                const noseIndices = [1, 2, 98, 327]; // mezcla de índices para resaltar la zona nasal
+                ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+                ctx.lineWidth = 1;
                 ctx.beginPath();
-                ctx.arc(pointX, pointY, 1.5, 0, Math.PI * 2);
-                ctx.fill();
-            }
-            
-            // Líneas de conexión
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-            ctx.lineWidth = 1;
-            
-            const connectionPoints = [leftCheek, rightCheek, noseTip, chin];
-            connectionPoints.forEach(point => {
-                ctx.beginPath();
-                ctx.moveTo(centerX * faceCanvas.width, centerY * faceCanvas.height);
-                ctx.lineTo(point.x * faceCanvas.width, point.y * faceCanvas.height);
+                for (let i = 0; i < noseIndices.length; i++) {
+                    const p = landmarks[noseIndices[i]];
+                    if (!p) continue;
+                    const x = p.x * faceCanvas.width;
+                    const y = p.y * faceCanvas.height;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
                 ctx.stroke();
-            });
-            
+
+                // Generar unas "rayas" limpias que sigan la forma: varias curvas paralelas al ovalo
+                ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([6,4]);
+                // Para hacer rayas que sigan el contorno, tomamos puntos del face oval y dibujamos líneas entre pares
+                const ovalPoints = [];
+                for (let i = 0; i < FACEMESH_FACE_OVAL.length; i++) {
+                    const idx = FACEMESH_FACE_OVAL[i][0] || FACEMESH_FACE_OVAL[i]; // algunos arrays tienen subarrays
+                    const p = landmarks[idx];
+                    if (p) ovalPoints.push({x: p.x * faceCanvas.width, y: p.y * faceCanvas.height});
+                }
+                // dibujar 3 rayas internas desplazadas hacia el centro
+                for (let offset = 0.06; offset <= 0.18; offset += 0.06) {
+                    ctx.beginPath();
+                    for (let i = 0; i < ovalPoints.length; i+=2) {
+                        const p = ovalPoints[i];
+                        // acercar el punto hacia el centro de la cara (vector hacia nariz tip)
+                        const nose = landmarks[1];
+                        const nx = nose.x * faceCanvas.width;
+                        const ny = nose.y * faceCanvas.height;
+                        const dx = nx - p.x;
+                        const dy = ny - p.y;
+                        const tx = p.x + dx * offset;
+                        const ty = p.y + dy * offset;
+                        if (i === 0) ctx.moveTo(tx, ty);
+                        else ctx.lineTo(tx, ty);
+                    }
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+
+            } catch (e) {
+                // Si drawConnectors o constantes no están disponibles, evitamos que rompa todo
+                console.warn('drawConnectors falló o constantes FACEMESH no disponibles:', e);
+            }
+
+            // Marcar que hay cara detectada y mostrar indicador
             isFaceDetected = true;
             maskIndicator.style.display = 'block';
         }
@@ -728,11 +731,18 @@
                 });
 
                 videoElement.srcObject = stream;
-                
-                // Configurar canvas
-                faceCanvas.width = videoElement.videoWidth;
-                faceCanvas.height = videoElement.videoHeight;
-                
+
+                // Esperar a que el video tenga tamaño real
+                videoElement.addEventListener('loadeddata', () => {
+                    // Ajustar canvas al tamaño real del video
+                    faceCanvas.width = videoElement.videoWidth || videoElement.getBoundingClientRect().width;
+                    faceCanvas.height = videoElement.videoHeight || videoElement.getBoundingClientRect().height;
+                });
+
+                // Configurar canvas inicialmente conservando estilo responsive
+                faceCanvas.width = videoElement.videoWidth || 640;
+                faceCanvas.height = videoElement.videoHeight || 480;
+
                 // Iniciar procesamiento de Face Mesh
                 async function processVideo() {
                     if (videoElement.readyState === 4) {
