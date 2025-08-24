@@ -3,11 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistema de Reconocimiento Facial - Registro de Horas</title>
+    <title>Sistema de Reconocimiento Facial con Mascarilla - Registro de Horas</title>
     <!-- TensorFlow.js y Teachable Machine -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
-    <!-- Google Fonts (Opcional, para una tipografía más moderna) -->
+    <!-- MediaPipe Face Mesh para detección de puntos faciales -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         /* Variables CSS para fácil personalización */
@@ -17,11 +22,13 @@
             --accent-blue: #00bcd4; /* Cyan */
             --accent-green: #00e676; /* Green A700 */
             --accent-red: #ff5252; /* Red A700 */
+            --accent-purple: #9c27b0; /* Purple para la mascarilla */
             --text-light: #e0e0e0;
             --text-muted: #a0a0a0;
             --glass-bg: rgba(255, 255, 255, 0.08);
             --border-color: rgba(255, 255, 255, 0.15);
             --shadow-color: rgba(0, 0, 0, 0.4);
+            --mask-color: rgba(156, 39, 176, 0.6); /* Color de la mascarilla */
         }
 
         /* Estilos Generales */
@@ -32,7 +39,7 @@
         }
 
         body {
-            font-family: 'Inter', sans-serif; /* Fuente moderna y limpia */
+            font-family: 'Inter', sans-serif;
             background: linear-gradient(135deg, var(--bg-dark) 0%, var(--bg-dark-light) 100%);
             min-height: 100vh;
             display: flex;
@@ -40,34 +47,34 @@
             align-items: center;
             padding: 20px;
             color: var(--text-light);
-            overflow-x: hidden; /* Prevenir scroll horizontal */
+            overflow-x: hidden;
         }
 
         .main-container {
             width: 100%;
-            max-width: 1300px; /* Un poco más ancho */
+            max-width: 1300px;
             display: grid;
-            grid-template-columns: 1fr 1.3fr; /* Panel de info más dominante */
-            gap: 40px; /* Más espacio entre paneles */
+            grid-template-columns: 1fr 1.3fr;
+            gap: 40px;
             align-items: start;
         }
 
-        /* Estilos de los Paneles (Efecto "Glassmorphism") */
+        /* Estilos de los Paneles */
         .camera-box,
         .info-panel {
             background: var(--glass-bg);
             border: 1px solid var(--border-color);
-            border-radius: 18px; /* Bordes más suaves */
-            padding: 35px; /* Más padding */
-            box-shadow: 0 15px 30px var(--shadow-color); /* Sombra más difusa */
-            backdrop-filter: blur(10px); /* Efecto de desenfoque de fondo */
-            -webkit-backdrop-filter: blur(10px); /* Compatibilidad Safari */
+            border-radius: 18px;
+            padding: 35px;
+            box-shadow: 0 15px 30px var(--shadow-color);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
             transition: transform 0.3s ease, box-shadow 0.3s ease;
         }
 
         .camera-box:hover,
         .info-panel:hover {
-            transform: translateY(-8px); /* Elevación más pronunciada */
+            transform: translateY(-8px);
             box-shadow: 0 25px 50px var(--shadow-color);
         }
 
@@ -78,11 +85,11 @@
         }
 
         .camera-header h2 {
-            font-family: 'Roboto Mono', monospace; /* Fuente monoespaciada para un toque tech */
-            font-size: 2.5em; /* Título más grande */
+            font-family: 'Roboto Mono', monospace;
+            font-size: 2.5em;
             margin-bottom: 10px;
-            color: var(--accent-blue); /* Color de acento */
-            text-shadow: 0 0 10px var(--accent-blue); /* Efecto de brillo */
+            color: var(--accent-blue);
+            text-shadow: 0 0 10px var(--accent-blue);
         }
 
         .camera-header p {
@@ -95,13 +102,13 @@
         #webcam-container {
             position: relative;
             width: 100%;
-            padding-bottom: 75%; /* Proporción 4:3 */
+            padding-bottom: 75%;
             height: 0;
             overflow: hidden;
             border-radius: 12px;
             background-color: #000;
-            box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.5); /* Sombra interna para profundidad */
-            border: 2px solid var(--accent-blue); /* Borde de acento */
+            box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.5);
+            border: 2px solid var(--accent-blue);
         }
 
         #webcam-container canvas {
@@ -114,9 +121,32 @@
             border-radius: 10px;
         }
 
+        /* Indicador de mascarilla */
+        .mask-indicator {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: var(--mask-color);
+            color: white;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+            z-index: 10;
+            box-shadow: 0 4px 12px rgba(156, 39, 176, 0.4);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .mask-indicator::before {
+            content: "🎭";
+            font-size: 1.2em;
+        }
+
         /* Sección de Información del Usuario */
         .user-info-section {
-            background: linear-gradient(45deg, var(--accent-blue) 0%, #007bff 100%); /* Gradiente vibrante */
+            background: linear-gradient(45deg, var(--accent-blue) 0%, #007bff 100%);
             color: white;
             padding: 30px;
             border-radius: 15px;
@@ -178,11 +208,10 @@
             border-radius: 15px;
             box-shadow: 0 10px 20px var(--shadow-color);
             margin-bottom: 30px;
-            max-height: 350px; /* Altura máxima para scroll */
-            overflow-y: auto; /* Habilitar scroll vertical */
+            max-height: 350px;
+            overflow-y: auto;
         }
 
-        /* Scrollbar personalizado */
         .records-section::-webkit-scrollbar {
             width: 8px;
         }
@@ -199,7 +228,6 @@
             background: #00a0b0;
         }
 
-
         .records-header {
             text-align: center;
             margin-bottom: 20px;
@@ -214,7 +242,7 @@
         .records-table {
             width: 100%;
             border-collapse: separate;
-            border-spacing: 0 8px; /* Espacio entre filas */
+            border-spacing: 0 8px;
             margin-top: 15px;
         }
 
@@ -231,7 +259,7 @@
             color: var(--accent-blue);
             font-weight: 600;
             position: sticky;
-            top: -25px; /* Ajustar para que quede dentro del padding del records-section */
+            top: -25px;
             z-index: 1;
             border-bottom: 1px solid var(--border-color);
         }
@@ -245,9 +273,6 @@
         .records-table tr:hover {
             background-color: rgba(0, 0, 0, 0.4);
         }
-
-        .records-table tr:first-child th:first-child { border-top-left-radius: 8px; }
-        .records-table tr:first-child th:last-child { border-top-right-radius: 8px; }
 
         .pending {
             color: var(--accent-red);
@@ -277,18 +302,17 @@
 
         .countdown-number {
             font-family: 'Roboto Mono', monospace;
-            font-size: 5em; /* Número aún más grande */
+            font-size: 5em;
             font-weight: bold;
             color: var(--accent-green);
             text-shadow: 0 0 20px var(--accent-green);
-            animation: scaleUp 0.5s ease-out forwards;
         }
 
-        /* Botones (Estilo "Ghost" o "Outline") */
+        /* Botones */
         .button-group {
             display: flex;
             flex-direction: column;
-            gap: 18px; /* Más espacio entre botones */
+            gap: 18px;
             margin-top: 30px;
         }
 
@@ -347,7 +371,24 @@
             font-family: 'Roboto Mono', monospace;
         }
 
-        /* Media Queries para Responsividad */
+        /* Animaciones */
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        @keyframes maskGlow {
+            0% { box-shadow: 0 0 5px var(--mask-color); }
+            50% { box-shadow: 0 0 20px var(--mask-color); }
+            100% { box-shadow: 0 0 5px var(--mask-color); }
+        }
+
+        .mask-active {
+            animation: maskGlow 2s infinite;
+        }
+
+        /* Media Queries */
         @media (max-width: 992px) {
             .main-container {
                 grid-template-columns: 1fr;
@@ -364,12 +405,6 @@
 
             .user-name {
                 font-size: 2em;
-            }
-
-            .records-table th,
-            .records-table td {
-                padding: 10px;
-                font-size: 0.9em;
             }
         }
 
@@ -394,15 +429,9 @@
                 font-size: 1.8em;
             }
 
-            .countdown-number {
-                font-size: 4em;
-            }
-
-            .dashboard-button,
-            .logout-button,
-            .login-button {
-                font-size: 1em;
-                padding: 12px 20px;
+            .mask-indicator {
+                font-size: 0.8em;
+                padding: 6px 12px;
             }
         }
     </style>
@@ -418,6 +447,9 @@
             
             <div id="webcam-container">
                 <!-- La cámara se insertará aquí -->
+                <div class="mask-indicator" id="mask-indicator" style="display: none;">
+                    Mascarilla Activada
+                </div>
             </div>
         </div>
 
@@ -465,35 +497,35 @@
         </div>
 
         <div class="security-badge">
-            Sistema de registro automático - Reconocimiento facial por IA
+            Sistema de registro automático - Reconocimiento facial por IA con Mascarilla Digital
         </div>
     </div>
 
     <script>
         const URL = "./model/";
-        const MAX_REGISTROS = 6; // Solo 6 registros como solicitado
+        const MAX_REGISTROS = 6;
         let model, webcam, maxPredictions;
+        let faceMesh;
         let recognitionCount = 0;
         let countdownInterval;
         let isCountingDown = false;
         let registros = [];
         let lastRecognitionTime = 0;
-        const RECOGNITION_COOLDOWN = 30000; // 30 segundos entre registros
+        const RECOGNITION_COOLDOWN = 30000;
         let usuarioEnSistema = false;
+        let isFaceDetected = false;
 
         // Función para obtener y mostrar información del usuario
         function loadUserInfo() {
             const userName = localStorage.getItem('usuarioNombre') || 'Usuario';
             document.getElementById('user-display-name').textContent = userName;
             
-            // Cargar registros existentes
             const savedRegistros = localStorage.getItem('registrosHorarios');
             if (savedRegistros) {
                 registros = JSON.parse(savedRegistros);
                 updateRecordsTable();
             }
             
-            // Verificar estado del sistema
             const sistemaEstado = localStorage.getItem('sistemaEstado');
             if (sistemaEstado === 'ingresado') {
                 usuarioEnSistema = true;
@@ -520,7 +552,6 @@
             const fecha = now.toLocaleDateString();
             const horaEntrada = now.toLocaleTimeString();
             
-            // Agregar a array de registros
             registros.unshift({
                 fecha: fecha,
                 entrada: horaEntrada,
@@ -528,15 +559,11 @@
                 estado: "activo"
             });
             
-            // Limitar a últimos 6 registros
             if (registros.length > MAX_REGISTROS) {
                 registros = registros.slice(0, MAX_REGISTROS);
             }
             
-            // Guardar en localStorage
             localStorage.setItem('registrosHorarios', JSON.stringify(registros));
-            
-            // Actualizar tabla
             updateRecordsTable();
             
             return now;
@@ -547,7 +574,6 @@
             const now = new Date();
             const horaSalida = now.toLocaleTimeString();
             
-            // Buscar el último registro activo y marcarlo como finalizado
             for (let i = 0; i < registros.length; i++) {
                 if (registros[i].estado === "activo" && registros[i].salida === "PENDIENTE") {
                     registros[i].salida = horaSalida;
@@ -556,10 +582,7 @@
                 }
             }
             
-            // Guardar en localStorage
             localStorage.setItem('registrosHorarios', JSON.stringify(registros));
-            
-            // Actualizar tabla
             updateRecordsTable();
             
             return now;
@@ -570,14 +593,8 @@
             const tableBody = document.getElementById('records-table-body');
             tableBody.innerHTML = '';
             
-            registros.forEach((registro, index) => {
+            registros.forEach((registro) => {
                 const row = document.createElement('tr');
-                
-                // No aplicar estilo de fondo directo en JS para mantener el estilo CSS de la tabla
-                // if (registro.estado === "activo") {
-                //     row.style.backgroundColor = '#e8f5e8'; 
-                // }
-                
                 row.innerHTML = `
                     <td>${registro.fecha}</td>
                     <td>${registro.entrada}</td>
@@ -588,7 +605,7 @@
             });
         }
 
-        // Función para mostrar botón de dashboard (solo cuando se está en el sistema)
+        // Función para mostrar botón de dashboard
         function showDashboardButton() {
             if (usuarioEnSistema) {
                 document.getElementById('dashboard-button').style.display = 'block';
@@ -620,6 +637,93 @@
             document.getElementById('status').textContent = message;
         }
 
+        // Función para dibujar la mascarilla facial
+        function drawFacialMask(predictions, ctx) {
+            if (predictions.length > 0) {
+                const keypoints = predictions[0].scaledMesh;
+                
+                // Puntos clave para la mascarilla (área de la boca y nariz)
+                const noseTip = keypoints[1];
+                const chin = keypoints[152];
+                const leftCheek = keypoints[234];
+                const rightCheek = keypoints[454];
+                
+                // Dibujar mascarilla tipo quirúrgica
+                ctx.fillStyle = 'rgba(156, 39, 176, 0.6)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.lineWidth = 2;
+                
+                // Crear forma de mascarilla
+                ctx.beginPath();
+                ctx.moveTo(leftCheek[0], leftCheek[1] - 10);
+                ctx.lineTo(rightCheek[0], rightCheek[1] - 10);
+                ctx.lineTo(rightCheek[0] + 20, chin[1] + 15);
+                ctx.lineTo(leftCheek[0] - 20, chin[1] + 15);
+                ctx.closePath();
+                
+                ctx.fill();
+                ctx.stroke();
+                
+                // Dibujar pliegues de la mascarilla
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                ctx.lineWidth = 1;
+                
+                // Pliegue central
+                ctx.beginPath();
+                ctx.moveTo(noseTip[0], noseTip[1] + 5);
+                ctx.lineTo(noseTip[0], chin[1] + 10);
+                ctx.stroke();
+                
+                // Pliegues laterales
+                ctx.beginPath();
+                ctx.moveTo(leftCheek[0] - 10, leftCheek[1] + 5);
+                ctx.lineTo(leftCheek[0] - 15, chin[1] + 12);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.moveTo(rightCheek[0] + 10, rightCheek[1] + 5);
+                ctx.lineTo(rightCheek[0] + 15, chin[1] + 12);
+                ctx.stroke();
+                
+                isFaceDetected = true;
+                document.getElementById('mask-indicator').style.display = 'flex';
+                document.getElementById('mask-indicator').classList.add('mask-active');
+            } else {
+                isFaceDetected = false;
+                document.getElementById('mask-indicator').style.display = 'none';
+                document.getElementById('mask-indicator').classList.remove('mask-active');
+            }
+        }
+
+        // Inicializar Face Mesh
+        async function initFaceMesh() {
+            faceMesh = new FaceMesh({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+                }
+            });
+
+            faceMesh.setOptions({
+                maxNumFaces: 1,
+                refineLandmarks: true,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            faceMesh.onResults((results) => {
+                if (results.multiFaceLandmarks && webcam.canvas) {
+                    const ctx = webcam.canvas.getContext('2d');
+                    ctx.clearRect(0, 0, webcam.canvas.width, webcam.canvas.height);
+                    
+                    // Dibujar el video de la cámara
+                    ctx.drawImage(webcam.webcamVideo, 0, 0, webcam.canvas.width, webcam.canvas.height);
+                    
+                    // Dibujar la mascarilla facial
+                    drawFacialMask(results.multiFaceLandmarks, ctx);
+                }
+            });
+        }
+
         async function init() {
             const modelURL = URL + "model.json";
             const metadataURL = URL + "metadata.json";
@@ -633,7 +737,7 @@
 
             // Configurar event listeners para los botones
             document.getElementById('dashboard-button').addEventListener('click', function() {
-                window.location.href = "dashboar.html"; // Asegúrate de que esta ruta sea correcta
+                window.location.href = "dashboard.html";
             });
 
             document.getElementById('logout-button').addEventListener('click', function() {
@@ -641,51 +745,60 @@
             });
 
             document.getElementById('login-button').addEventListener('click', function() {
-                // Este botón solo es visible cuando no se está en el sistema
-                // Al hacer clic, se reinicia el proceso de reconocimiento
-                usuarioEnSistema = false; // Permitir que el reconocimiento comience de nuevo
-                hideAllButtons(); // Ocultar botones hasta que se reconozca
+                usuarioEnSistema = false;
+                hideAllButtons();
                 updateStatus('Sistema listo para reconocimiento facial. Por favor, mire a la cámara.');
             });
 
             try {
-                // Cargar modelo y metadatos
+                // Inicializar Face Mesh
+                await initFaceMesh();
+
+                // Cargar modelo y metadatos de Teachable Machine
                 model = await tmImage.load(modelURL, metadataURL);
                 maxPredictions = model.getTotalClasses();
 
-                // Configurar la cámara para mayor velocidad y eficiencia
-                const flip = true; // Voltear la cámara si es necesario
-                webcam = new tmImage.Webcam(320, 240, flip); // Tamaño más pequeño para mayor velocidad
+                // Configurar la cámara
+                const flip = true;
+                webcam = new tmImage.Webcam(640, 480, flip);
                 await webcam.setup();
                 await webcam.play();
 
                 // Añadir la cámara al contenedor
                 document.getElementById("webcam-container").appendChild(webcam.canvas);
 
+                // Iniciar el procesamiento de Face Mesh
+                async function processFaceMesh() {
+                    if (webcam.webcamVideo.readyState === 4) {
+                        await faceMesh.send({image: webcam.webcamVideo});
+                    }
+                    requestAnimationFrame(processFaceMesh);
+                }
+
+                processFaceMesh();
+
                 if (!usuarioEnSistema) {
                     updateStatus(`Sistema listo. Analizando rostro...`);
                 }
                 
-                // Comenzar el loop de predicciones más rápido
-                loop(); // Llamada inicial sin setTimeout para empezar de inmediato
+                // Comenzar el loop de predicciones
+                loop();
 
             } catch (error) {
                 console.error('Error al cargar el modelo o configurar la cámara:', error);
                 updateStatus('❌ Error al iniciar el sistema. Asegúrate de que la cámara esté disponible y los archivos del modelo sean correctos.');
-                // Ocultar la cámara si hay un error
                 document.getElementById("webcam-container").innerHTML = '<p style="color: var(--accent-red); font-family: \'Roboto Mono\', monospace; padding: 20px; text-align: center;">Error: No se pudo iniciar la cámara o cargar el modelo.</p>';
             }
         }
 
         async function loop() {
-            webcam.update(); // Actualiza el frame de la cámara
-            await predict(); // Realiza la predicción
-            requestAnimationFrame(loop); // Usa requestAnimationFrame para un loop más suave y eficiente
+            webcam.update();
+            await predict();
+            requestAnimationFrame(loop);
         }
 
         async function predict() {
-            // Solo procesar reconocimiento si no se está en el sistema
-            if (usuarioEnSistema) {
+            if (usuarioEnSistema || !isFaceDetected) {
                 return;
             }
 
@@ -693,30 +806,25 @@
             let userDetected = false;
             const currentTime = Date.now();
             
-            // Verificar cooldown para evitar múltiples registros seguidos
             if (currentTime - lastRecognitionTime < RECOGNITION_COOLDOWN) {
-                // Si estamos en cooldown, no hacemos nada y salimos
                 return;
             }
             
             for (let i = 0; i < maxPredictions; i++) {
                 const confidence = prediction[i].probability;
 
-                // Detectar usuario con alta confianza (ajusta "Class 1" si tu modelo tiene otro nombre)
                 if ((prediction[i].className === "Class 1" || i === 0) && confidence > 0.98) {
                     userDetected = true;
                     recognitionCount++;
                     
-                    // Si se ha detectado al usuario 2 veces consecutivas y no hay cuenta regresiva activa
                     if (recognitionCount >= 2 && !isCountingDown) {
-                        lastRecognitionTime = currentTime; // Actualizar el tiempo de la última detección exitosa
+                        lastRecognitionTime = currentTime;
                         startCountdown();
-                        break; // Salir del bucle una vez que se inicia la cuenta regresiva
+                        break;
                     }
                 }
             }
 
-            // Reiniciar contador si no se detecta al usuario en el frame actual
             if (!userDetected) {
                 recognitionCount = 0;
             }
@@ -738,46 +846,30 @@
                     clearInterval(countdownInterval);
                     isCountingDown = false;
                     
-                    // Registrar el ingreso
                     addEntryRecord();
-                    
-                    // Cambiar estado del sistema
                     usuarioEnSistema = true;
                     localStorage.setItem('sistemaEstado', 'ingresado');
                     
-                    // Mostrar botones correspondientes
                     showDashboardButton();
                     showLogoutButton();
-                    
-                    // Ocultar countdown
                     countdownSection.style.display = 'none';
                     
                     updateStatus('✅ Ingreso registrado correctamente. ¡Bienvenido!');
-                    
-                    // Resetear contador de reconocimiento
                     recognitionCount = 0;
                 }
             }, 1000);
         }
 
         function salirDelSistema() {
-            // Registrar salida
             addExitRecord();
-            
-            // Cambiar estado del sistema
             usuarioEnSistema = false;
             localStorage.setItem('sistemaEstado', 'salido');
-            
-            // Mostrar botón de ingresar
             showLoginButton();
-            
             updateStatus('🚪 Salida registrada. Sistema listo para un nuevo ingreso.');
         }
 
-        // Función para manejar cierre de ventana/navegador (para registrar salida)
         window.addEventListener('beforeunload', function() {
             if (usuarioEnSistema) {
-                // Buscar registros activos y marcarlos como finalizados
                 const now = new Date();
                 registros.forEach(registro => {
                     if (registro.estado === "activo" && registro.salida === "PENDIENTE") {
@@ -786,14 +878,12 @@
                     }
                 });
                 localStorage.setItem('registrosHorarios', JSON.stringify(registros));
-                localStorage.setItem('sistemaEstado', 'salido'); // Marcar como salido
+                localStorage.setItem('sistemaEstado', 'salido');
             }
         });
 
-        // Inicializar cuando se cargue la página
         window.addEventListener("DOMContentLoaded", init);
     </script>
 </body>
 </html>
-
 
