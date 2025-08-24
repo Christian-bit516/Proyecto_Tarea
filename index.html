@@ -1,3 +1,8 @@
+<SKIPPED_HTML_EDIT_MODE></SKIPPED_HTML_EDIT_MODE>
+Tienes razón, necesito implementar correctamente la mascarilla facial. Voy a crear un sistema completo de mascarilla que se adapte al rostro detectado.
+
+`index.html`
+```html
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -19,16 +24,17 @@
         :root {
             --bg-dark: #0a192f;
             --bg-dark-light: #1a2a40;
-            --accent-blue: #00bcd4; /* Cyan */
-            --accent-green: #00e676; /* Green A700 */
-            --accent-red: #ff5252; /* Red A700 */
-            --accent-purple: #9c27b0; /* Purple para la mascarilla */
+            --accent-blue: #00bcd4;
+            --accent-green: #00e676;
+            --accent-red: #ff5252;
+            --accent-purple: #9c27b0;
+            --mask-blue: #4fc3f7;
+            --mask-white: #ffffff;
             --text-light: #e0e0e0;
             --text-muted: #a0a0a0;
             --glass-bg: rgba(255, 255, 255, 0.08);
             --border-color: rgba(255, 255, 255, 0.15);
             --shadow-color: rgba(0, 0, 0, 0.4);
-            --mask-color: rgba(156, 39, 176, 0.6); /* Color de la mascarilla */
         }
 
         /* Estilos Generales */
@@ -111,7 +117,7 @@
             border: 2px solid var(--accent-blue);
         }
 
-        #webcam-container canvas {
+        #webcam-canvas {
             position: absolute;
             top: 0;
             left: 0;
@@ -119,6 +125,17 @@
             height: 100%;
             object-fit: cover;
             border-radius: 10px;
+            z-index: 1;
+        }
+
+        #mask-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none;
         }
 
         /* Indicador de mascarilla */
@@ -126,21 +143,21 @@
             position: absolute;
             top: 15px;
             right: 15px;
-            background: var(--mask-color);
+            background: var(--mask-blue);
             color: white;
             padding: 8px 15px;
             border-radius: 20px;
             font-size: 0.9em;
             font-weight: 600;
             z-index: 10;
-            box-shadow: 0 4px 12px rgba(156, 39, 176, 0.4);
+            box-shadow: 0 4px 12px rgba(79, 195, 247, 0.4);
             display: flex;
             align-items: center;
             gap: 8px;
         }
 
         .mask-indicator::before {
-            content: "🎭";
+            content: "😷";
             font-size: 1.2em;
         }
 
@@ -379,9 +396,9 @@
         }
 
         @keyframes maskGlow {
-            0% { box-shadow: 0 0 5px var(--mask-color); }
-            50% { box-shadow: 0 0 20px var(--mask-color); }
-            100% { box-shadow: 0 0 5px var(--mask-color); }
+            0% { box-shadow: 0 0 5px var(--mask-blue); }
+            50% { box-shadow: 0 0 20px var(--mask-blue); }
+            100% { box-shadow: 0 0 5px var(--mask-blue); }
         }
 
         .mask-active {
@@ -446,7 +463,8 @@
             </div>
             
             <div id="webcam-container">
-                <!-- La cámara se insertará aquí -->
+                <canvas id="webcam-canvas"></canvas>
+                <canvas id="mask-canvas"></canvas>
                 <div class="mask-indicator" id="mask-indicator" style="display: none;">
                     Mascarilla Activada
                 </div>
@@ -514,6 +532,7 @@
         const RECOGNITION_COOLDOWN = 30000;
         let usuarioEnSistema = false;
         let isFaceDetected = false;
+        let maskCanvas, maskCtx;
 
         // Función para obtener y mostrar información del usuario
         function loadUserInfo() {
@@ -637,62 +656,103 @@
             document.getElementById('status').textContent = message;
         }
 
-        // Función para dibujar la mascarilla facial
-        function drawFacialMask(predictions, ctx) {
-            if (predictions.length > 0) {
-                const keypoints = predictions[0].scaledMesh;
-                
-                // Puntos clave para la mascarilla (área de la boca y nariz)
-                const noseTip = keypoints[1];
-                const chin = keypoints[152];
-                const leftCheek = keypoints[234];
-                const rightCheek = keypoints[454];
-                
-                // Dibujar mascarilla tipo quirúrgica
-                ctx.fillStyle = 'rgba(156, 39, 176, 0.6)';
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-                ctx.lineWidth = 2;
-                
-                // Crear forma de mascarilla
+        // Función para dibujar mascarilla facial profesional
+        function drawProfessionalMask(landmarks, ctx) {
+            if (!landmarks || landmarks.length === 0) return;
+            
+            // Puntos clave para la mascarilla
+            const noseTip = landmarks[1];
+            const chin = landmarks[152];
+            const leftCheek = landmarks[234];
+            const rightCheek = landmarks[454];
+            const leftEar = landmarks[127];
+            const rightEar = landmarks[356];
+            
+            // Calcular dimensiones de la mascarilla
+            const maskWidth = Math.abs(rightCheek.x - leftCheek.x) * 1.8;
+            const maskHeight = Math.abs(chin.y - noseTip.y) * 2.5;
+            const centerX = (leftCheek.x + rightCheek.x) / 2;
+            const centerY = (noseTip.y + chin.y) / 2;
+            
+            // Limpiar canvas de mascarilla
+            ctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+            
+            // Dibujar mascarilla tipo quirúrgica profesional
+            ctx.fillStyle = 'rgba(79, 195, 247, 0.7)'; // Azul médico
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.lineWidth = 3;
+            
+            // Forma principal de la mascarilla
+            ctx.beginPath();
+            ctx.ellipse(
+                centerX * maskCanvas.width,
+                centerY * maskCanvas.height,
+                maskWidth * maskCanvas.width / 2,
+                maskHeight * maskCanvas.height / 2,
+                0, 0, 2 * Math.PI
+            );
+            ctx.fill();
+            ctx.stroke();
+            
+            // Pliegues horizontales
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.lineWidth = 2;
+            
+            for (let i = 1; i <= 3; i++) {
+                const yOffset = (maskHeight * 0.2) * i;
                 ctx.beginPath();
-                ctx.moveTo(leftCheek[0], leftCheek[1] - 10);
-                ctx.lineTo(rightCheek[0], rightCheek[1] - 10);
-                ctx.lineTo(rightCheek[0] + 20, chin[1] + 15);
-                ctx.lineTo(leftCheek[0] - 20, chin[1] + 15);
-                ctx.closePath();
-                
-                ctx.fill();
+                ctx.ellipse(
+                    centerX * maskCanvas.width,
+                    (centerY - maskHeight * 0.1 + yOffset * 0.3) * maskCanvas.height,
+                    (maskWidth * 0.9) * maskCanvas.width / 2,
+                    (maskHeight * 0.15) * maskCanvas.height / 2,
+                    0, 0, 2 * Math.PI
+                );
                 ctx.stroke();
-                
-                // Dibujar pliegues de la mascarilla
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-                ctx.lineWidth = 1;
-                
-                // Pliegue central
-                ctx.beginPath();
-                ctx.moveTo(noseTip[0], noseTip[1] + 5);
-                ctx.lineTo(noseTip[0], chin[1] + 10);
-                ctx.stroke();
-                
-                // Pliegues laterales
-                ctx.beginPath();
-                ctx.moveTo(leftCheek[0] - 10, leftCheek[1] + 5);
-                ctx.lineTo(leftCheek[0] - 15, chin[1] + 12);
-                ctx.stroke();
-                
-                ctx.beginPath();
-                ctx.moveTo(rightCheek[0] + 10, rightCheek[1] + 5);
-                ctx.lineTo(rightCheek[0] + 15, chin[1] + 12);
-                ctx.stroke();
-                
-                isFaceDetected = true;
-                document.getElementById('mask-indicator').style.display = 'flex';
-                document.getElementById('mask-indicator').classList.add('mask-active');
-            } else {
-                isFaceDetected = false;
-                document.getElementById('mask-indicator').style.display = 'none';
-                document.getElementById('mask-indicator').classList.remove('mask-active');
             }
+            
+            // Tiras elásticas (simuladas)
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.lineWidth = 4;
+            
+            // Tira izquierda
+            ctx.beginPath();
+            ctx.moveTo((leftCheek.x - maskWidth * 0.2) * maskCanvas.width, centerY * maskCanvas.height);
+            ctx.lineTo((leftEar.x) * maskCanvas.width, (leftEar.y) * maskCanvas.height);
+            ctx.stroke();
+            
+            // Tira derecha
+            ctx.beginPath();
+            ctx.moveTo((rightCheek.x + maskWidth * 0.2) * maskCanvas.width, centerY * maskCanvas.height);
+            ctx.lineTo((rightEar.x) * maskCanvas.width, (rightEar.y) * maskCanvas.height);
+            ctx.stroke();
+            
+            // Efecto de transparencia en el centro
+            const gradient = ctx.createRadialGradient(
+                centerX * maskCanvas.width,
+                centerY * maskCanvas.height,
+                0,
+                centerX * maskCanvas.width,
+                centerY * maskCanvas.height,
+                maskWidth * maskCanvas.width / 2
+            );
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+            gradient.addColorStop(1, 'rgba(79, 195, 247, 0.7)');
+            
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.ellipse(
+                centerX * maskCanvas.width,
+                centerY * maskCanvas.height,
+                maskWidth * maskCanvas.width / 2,
+                maskHeight * maskCanvas.height / 2,
+                0, 0, 2 * Math.PI
+            );
+            ctx.fill();
+            
+            isFaceDetected = true;
+            document.getElementById('mask-indicator').style.display = 'flex';
+            document.getElementById('mask-indicator').classList.add('mask-active');
         }
 
         // Inicializar Face Mesh
@@ -711,15 +771,15 @@
             });
 
             faceMesh.onResults((results) => {
-                if (results.multiFaceLandmarks && webcam.canvas) {
-                    const ctx = webcam.canvas.getContext('2d');
-                    ctx.clearRect(0, 0, webcam.canvas.width, webcam.canvas.height);
-                    
-                    // Dibujar el video de la cámara
-                    ctx.drawImage(webcam.webcamVideo, 0, 0, webcam.canvas.width, webcam.canvas.height);
-                    
-                    // Dibujar la mascarilla facial
-                    drawFacialMask(results.multiFaceLandmarks, ctx);
+                if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                    // Dibujar mascarilla profesional
+                    drawProfessionalMask(results.multiFaceLandmarks[0], maskCtx);
+                } else {
+                    // Limpiar mascarilla si no se detecta rostro
+                    maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+                    isFaceDetected = false;
+                    document.getElementById('mask-indicator').style.display = 'none';
+                    document.getElementById('mask-indicator').classList.remove('mask-active');
                 }
             });
         }
@@ -754,18 +814,26 @@
                 // Inicializar Face Mesh
                 await initFaceMesh();
 
-                // Cargar modelo y metadatos de Teachable Machine
-                model = await tmImage.load(modelURL, metadataURL);
-                maxPredictions = model.getTotalClasses();
-
+                // Configurar canvas de mascarilla
+                maskCanvas = document.getElementById('mask-canvas');
+                maskCtx = maskCanvas.getContext('2d');
+                
                 // Configurar la cámara
                 const flip = true;
                 webcam = new tmImage.Webcam(640, 480, flip);
                 await webcam.setup();
                 await webcam.play();
 
-                // Añadir la cámara al contenedor
-                document.getElementById("webcam-container").appendChild(webcam.canvas);
+                // Configurar canvas de webcam
+                const webcamCanvas = document.getElementById('webcam-canvas');
+                webcamCanvas.width = webcam.width;
+                webcamCanvas.height = webcam.height;
+                maskCanvas.width = webcam.width;
+                maskCanvas.height = webcam.height;
+
+                // Cargar modelo de Teachable Machine
+                model = await tmImage.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
 
                 // Iniciar el procesamiento de Face Mesh
                 async function processFaceMesh() {
@@ -775,7 +843,16 @@
                     requestAnimationFrame(processFaceMesh);
                 }
 
+                // Iniciar dibujo del video
+                function drawWebcam() {
+                    const ctx = webcamCanvas.getContext('2d');
+                    ctx.clearRect(0, 0, webcamCanvas.width, webcamCanvas.height);
+                    ctx.drawImage(webcam.webcamVideo, 0, 0, webcamCanvas.width, webcamCanvas.height);
+                    requestAnimationFrame(drawWebcam);
+                }
+
                 processFaceMesh();
+                drawWebcam();
 
                 if (!usuarioEnSistema) {
                     updateStatus(`Sistema listo. Analizando rostro...`);
@@ -792,7 +869,6 @@
         }
 
         async function loop() {
-            webcam.update();
             await predict();
             requestAnimationFrame(loop);
         }
@@ -802,7 +878,7 @@
                 return;
             }
 
-            const prediction = await model.predict(webcam.canvas);
+            const prediction = await model.predict(document.getElementById('webcam-canvas'));
             let userDetected = false;
             const currentTime = Date.now();
             
@@ -840,50 +916,4 @@
             
             countdownInterval = setInterval(() => {
                 count--;
-                document.getElementById('countdown-number').textContent = count;
-                
-                if (count <= 0) {
-                    clearInterval(countdownInterval);
-                    isCountingDown = false;
-                    
-                    addEntryRecord();
-                    usuarioEnSistema = true;
-                    localStorage.setItem('sistemaEstado', 'ingresado');
-                    
-                    showDashboardButton();
-                    showLogoutButton();
-                    countdownSection.style.display = 'none';
-                    
-                    updateStatus('✅ Ingreso registrado correctamente. ¡Bienvenido!');
-                    recognitionCount = 0;
-                }
-            }, 1000);
-        }
-
-        function salirDelSistema() {
-            addExitRecord();
-            usuarioEnSistema = false;
-            localStorage.setItem('sistemaEstado', 'salido');
-            showLoginButton();
-            updateStatus('🚪 Salida registrada. Sistema listo para un nuevo ingreso.');
-        }
-
-        window.addEventListener('beforeunload', function() {
-            if (usuarioEnSistema) {
-                const now = new Date();
-                registros.forEach(registro => {
-                    if (registro.estado === "activo" && registro.salida === "PENDIENTE") {
-                        registro.salida = now.toLocaleTimeString();
-                        registro.estado = "finalizado";
-                    }
-                });
-                localStorage.setItem('registrosHorarios', JSON.stringify(registros));
-                localStorage.setItem('sistemaEstado', 'salido');
-            }
-        });
-
-        window.addEventListener("DOMContentLoaded", init);
-    </script>
-</body>
-</html>
-
+                document.getElementById('countdown-number').textContent = count
