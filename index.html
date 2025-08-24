@@ -594,56 +594,78 @@
 
         // Función para dibujar mascarilla con rayitos y puntos
         // <-- REEMPLAZADA: ahora dibuja puntos en todos los landmarks y usa las conexiones oficiales de MediaPipe -->
+        // Suavizado y ajuste mejorados para que la máscara "se pegue" al rostro
+        let prevLandmarks = [];
+
         function drawFacialMask(landmarks, ctx) {
             if (!landmarks) return;
 
             // Asegurarnos de que el canvas coincide con el tamaño actual del video
             // (video puede tardar en cargar; si videoElement.videoWidth==0 usamos boundingClient)
-            const vW = videoElement.videoWidth || videoElement.getBoundingClientRect().width;
-            const vH = videoElement.videoHeight || videoElement.getBoundingClientRect().height;
+            const vW = videoElement.videoWidth || videoElement.getBoundingClientRect().width || faceCanvas.clientWidth || 640;
+            const vH = videoElement.videoHeight || videoElement.getBoundingClientRect().height || faceCanvas.clientHeight || 480;
             if (faceCanvas.width !== vW || faceCanvas.height !== vH) {
                 faceCanvas.width = vW;
                 faceCanvas.height = vH;
             }
 
-            // Limpiar canvas
-            ctx.clearRect(0, 0, faceCanvas.width, faceCanvas.height);
-
-            // Dibujar puntos de landmarks (más visibles, tamaño 2)
-            ctx.fillStyle = 'rgba(0, 230, 255, 0.95)';
-            for (let i = 0; i < landmarks.length; i++) {
-                const x = landmarks[i].x * faceCanvas.width;
-                const y = landmarks[i].y * faceCanvas.height;
-                ctx.beginPath();
-                ctx.arc(x, y, 2, 0, Math.PI * 2);
-                ctx.fill();
+            // Suavizado (exponential smoothing) entre frames para evitar saltos
+            const alpha = 0.75; // peso del frame anterior (mayor = más suave)
+            if (prevLandmarks.length === landmarks.length) {
+                for (let i = 0; i < landmarks.length; i++) {
+                    prevLandmarks[i].x = prevLandmarks[i].x * alpha + landmarks[i].x * (1 - alpha);
+                    prevLandmarks[i].y = prevLandmarks[i].y * alpha + landmarks[i].y * (1 - alpha);
+                    prevLandmarks[i].z = (prevLandmarks[i].z || 0) * alpha + (landmarks[i].z || 0) * (1 - alpha);
+                }
+            } else {
+                // inicializar buffer si cambia el número de landmarks
+                prevLandmarks = landmarks.map(p => ({ x: p.x, y: p.y, z: p.z || 0 }));
             }
 
-            // Usar las utilidades de dibujo de MediaPipe para dibujar conexiones "máscara"
-            // drawConnectors está disponible desde drawing_utils.js
-            // Dibujamos varias capas: tesselation (malla), ovalo cara, ojos y labios para una forma de máscara realista
+            // Limpiar canvas antes de dibujar
+            ctx.clearRect(0, 0, faceCanvas.width, faceCanvas.height);
+
+            // IMPORTANTE: el video está "mirrored" en CSS (scaleX(-1)).
+            // Para que la máscara quede sobre la imagen espejo, dibujamos el canvas también volcado horizontalmente.
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.translate(-faceCanvas.width, 0);
+
             try {
-                // Malla ligera (suave)
-                drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, {color: 'rgba(0,200,255,0.12)', lineWidth: 0.8});
+                // Dibujar puntos suavizados
+                ctx.fillStyle = 'rgba(0, 230, 255, 0.95)';
+                for (let i = 0; i < prevLandmarks.length; i++) {
+                    const x = prevLandmarks[i].x * faceCanvas.width;
+                    const y = prevLandmarks[i].y * faceCanvas.height;
+                    ctx.beginPath();
+                    ctx.arc(x, y, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
 
-                // Contorno de la cara (oval)
-                drawConnectors(ctx, landmarks, FACEMESH_FACE_OVAL, {color: 'rgba(0,200,255,0.6)', lineWidth: 1.4});
+                // Dibujar malla sutil
+                if (typeof drawConnectors === 'function' && typeof FACEMESH_TESSELATION !== 'undefined') {
+                    drawConnectors(ctx, prevLandmarks, FACEMESH_TESSELATION, { color: 'rgba(0,200,255,0.12)', lineWidth: 0.7 });
+                }
 
-                // Ojos (derecho e izquierdo)
-                drawConnectors(ctx, landmarks, FACEMESH_RIGHT_EYE, {color: 'rgba(0,255,150,0.9)', lineWidth: 1.2});
-                drawConnectors(ctx, landmarks, FACEMESH_LEFT_EYE, {color: 'rgba(0,255,150,0.9)', lineWidth: 1.2});
+                // Contorno de la cara (óvalo)
+                if (typeof drawConnectors === 'function' && typeof FACEMESH_FACE_OVAL !== 'undefined') {
+                    drawConnectors(ctx, prevLandmarks, FACEMESH_FACE_OVAL, { color: 'rgba(0,200,255,0.75)', lineWidth: 1.6 });
+                }
 
-                // Labios
-                drawConnectors(ctx, landmarks, FACEMESH_LIPS, {color: 'rgba(255,180,180,0.9)', lineWidth: 1.2});
+                // Ojos y labios con mayor visibilidad
+                if (typeof drawConnectors === 'function') {
+                    if (typeof FACEMESH_RIGHT_EYE !== 'undefined') drawConnectors(ctx, prevLandmarks, FACEMESH_RIGHT_EYE, { color: 'rgba(0,255,150,0.95)', lineWidth: 1.2 });
+                    if (typeof FACEMESH_LEFT_EYE !== 'undefined') drawConnectors(ctx, prevLandmarks, FACEMESH_LEFT_EYE, { color: 'rgba(0,255,150,0.95)', lineWidth: 1.2 });
+                    if (typeof FACEMESH_LIPS !== 'undefined') drawConnectors(ctx, prevLandmarks, FACEMESH_LIPS, { color: 'rgba(255,140,140,0.95)', lineWidth: 1.2 });
+                }
 
-                // Nariz (algunos puntos centrales)
-                // Dibujar linea central de la nariz (usando índices centrales)
-                const noseIndices = [1, 2, 98, 327]; // mezcla de índices para resaltar la zona nasal
-                ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+                // Dibujar línea central de la nariz para dar "anclaje"
+                const noseIndices = [1, 2, 98, 327];
+                ctx.strokeStyle = 'rgba(255,255,255,0.65)';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 for (let i = 0; i < noseIndices.length; i++) {
-                    const p = landmarks[noseIndices[i]];
+                    const p = prevLandmarks[noseIndices[i]];
                     if (!p) continue;
                     const x = p.x * faceCanvas.width;
                     const y = p.y * faceCanvas.height;
@@ -652,40 +674,48 @@
                 }
                 ctx.stroke();
 
-                // Generar unas "rayas" limpias que sigan la forma: varias curvas paralelas al ovalo
-                ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-                ctx.lineWidth = 1;
-                ctx.setLineDash([6,4]);
-                // Para hacer rayas que sigan el contorno, tomamos puntos del face oval y dibujamos líneas entre pares
-                const ovalPoints = [];
-                for (let i = 0; i < FACEMESH_FACE_OVAL.length; i++) {
-                    const idx = FACEMESH_FACE_OVAL[i][0] || FACEMESH_FACE_OVAL[i]; // algunos arrays tienen subarrays
-                    const p = landmarks[idx];
-                    if (p) ovalPoints.push({x: p.x * faceCanvas.width, y: p.y * faceCanvas.height});
-                }
-                // dibujar 3 rayas internas desplazadas hacia el centro
-                for (let offset = 0.06; offset <= 0.18; offset += 0.06) {
-                    ctx.beginPath();
-                    for (let i = 0; i < ovalPoints.length; i+=2) {
-                        const p = ovalPoints[i];
-                        // acercar el punto hacia el centro de la cara (vector hacia nariz tip)
-                        const nose = landmarks[1];
-                        const nx = nose.x * faceCanvas.width;
-                        const ny = nose.y * faceCanvas.height;
-                        const dx = nx - p.x;
-                        const dy = ny - p.y;
-                        const tx = p.x + dx * offset;
-                        const ty = p.y + dy * offset;
-                        if (i === 0) ctx.moveTo(tx, ty);
-                        else ctx.lineTo(tx, ty);
+                // Rayas limpias que siguen el contorno facial (3 niveles)
+                if (typeof FACEMESH_FACE_OVAL !== 'undefined') {
+                    // crear lista de puntos del óvalo en píxeles
+                    const ovalPts = [];
+                    for (let i = 0; i < FACEMESH_FACE_OVAL.length; i++) {
+                        const entry = FACEMESH_FACE_OVAL[i];
+                        // entry puede ser par [a,b] o un índice; tomamos el primer valor si es array
+                        const idx = Array.isArray(entry) ? entry[0] : entry;
+                        const p = prevLandmarks[idx];
+                        if (p) ovalPts.push({ x: p.x * faceCanvas.width, y: p.y * faceCanvas.height });
                     }
-                    ctx.stroke();
+                    // calcular punto central (nariz) para desplazar
+                    const nose = prevLandmarks[1] || prevLandmarks[Math.floor(prevLandmarks.length/2)];
+                    const cx = (nose ? nose.x * faceCanvas.width : faceCanvas.width / 2);
+                    const cy = (nose ? nose.y * faceCanvas.height : faceCanvas.height / 2);
+
+                    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([6,4]);
+
+                    // dibujar 3 curvas internas
+                    [0.06, 0.11, 0.17].forEach(offset => {
+                        ctx.beginPath();
+                        for (let i = 0; i < ovalPts.length; i++) {
+                            const p = ovalPts[i];
+                            // desplazar hacia el centro (cx,cy) por "offset" fraccional
+                            const tx = p.x + (cx - p.x) * offset;
+                            const ty = p.y + (cy - p.y) * offset;
+                            if (i === 0) ctx.moveTo(tx, ty);
+                            else ctx.lineTo(tx, ty);
+                        }
+                        ctx.closePath();
+                        ctx.stroke();
+                    });
+
+                    ctx.setLineDash([]);
                 }
-                ctx.setLineDash([]);
 
             } catch (e) {
-                // Si drawConnectors o constantes no están disponibles, evitamos que rompa todo
-                console.warn('drawConnectors falló o constantes FACEMESH no disponibles:', e);
+                console.warn('Error al dibujar mascarilla:', e);
+            } finally {
+                ctx.restore(); // restaurar transform
             }
 
             // Marcar que hay cara detectada y mostrar indicador
