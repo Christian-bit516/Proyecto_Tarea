@@ -596,12 +596,19 @@
         // <-- REEMPLAZADA: ahora dibuja puntos en todos los landmarks y usa las conexiones oficiales de MediaPipe -->
         // Suavizado y ajuste mejorados para que la máscara "se pegue" al rostro
         let prevLandmarks = [];
+        let smoothedCenter = null;
+        let smoothedScale = null;
+
+        function distancePx(a, b, w, h) {
+            const dx = (a.x - b.x) * w;
+            const dy = (a.y - b.y) * h;
+            return Math.hypot(dx, dy);
+        }
 
         function drawFacialMask(landmarks, ctx) {
             if (!landmarks) return;
 
             // Asegurarnos de que el canvas coincide con el tamaño actual del video
-            // (video puede tardar en cargar; si videoElement.videoWidth==0 usamos boundingClient)
             const vW = videoElement.videoWidth || videoElement.getBoundingClientRect().width || faceCanvas.clientWidth || 640;
             const vH = videoElement.videoHeight || videoElement.getBoundingClientRect().height || faceCanvas.clientHeight || 480;
             if (faceCanvas.width !== vW || faceCanvas.height !== vH) {
@@ -609,108 +616,146 @@
                 faceCanvas.height = vH;
             }
 
-            // Suavizado (exponential smoothing) entre frames para evitar saltos
-            const alpha = 0.75; // peso del frame anterior (mayor = más suave)
-            if (prevLandmarks.length === landmarks.length) {
+            // CONFIG: suavizado responsivo (menor alpha = más responsivo)
+            const alpha = 0.15; // peso del frame anterior (0.15 = muy responsivo, poco retraso)
+
+            // Inicializar buffer si es la primera vez o cambió la longitud
+            if (prevLandmarks.length !== landmarks.length) {
+                prevLandmarks = landmarks.map(p => ({ x: p.x, y: p.y, z: p.z || 0 }));
+            } else {
+                // suavizamos landmarks (exponential smoothing rápido)
                 for (let i = 0; i < landmarks.length; i++) {
                     prevLandmarks[i].x = prevLandmarks[i].x * alpha + landmarks[i].x * (1 - alpha);
                     prevLandmarks[i].y = prevLandmarks[i].y * alpha + landmarks[i].y * (1 - alpha);
                     prevLandmarks[i].z = (prevLandmarks[i].z || 0) * alpha + (landmarks[i].z || 0) * (1 - alpha);
                 }
-            } else {
-                // inicializar buffer si cambia el número de landmarks
-                prevLandmarks = landmarks.map(p => ({ x: p.x, y: p.y, z: p.z || 0 }));
             }
 
-            // Limpiar canvas antes de dibujar
+            // Calcular puntos clave con los landmarks suavizados
+            const noseTip = prevLandmarks[1] || prevLandmarks[0];
+            const chin = prevLandmarks[152] || prevLandmarks[Math.floor(prevLandmarks.length*0.9)];
+            const leftCheek = prevLandmarks[234] || prevLandmarks[Math.floor(prevLandmarks.length*0.25)];
+            const rightCheek = prevLandmarks[454] || prevLandmarks[Math.floor(prevLandmarks.length*0.75)];
+
+            // Calcular dimensiones en pixeles
+            const faceWidthPx = distancePx(leftCheek, rightCheek, faceCanvas.width, faceCanvas.height);
+            const faceHeightPx = distancePx(noseTip, chin, faceCanvas.width, faceCanvas.height);
+
+            // Centro aproximado de la máscara (entre nariz y mentón / centro horizontal)
+            const centerXNorm = ((leftCheek.x + rightCheek.x) / 2);
+            const centerYNorm = ((noseTip.y + chin.y) / 2);
+            const centerX = centerXNorm * faceCanvas.width;
+            const centerY = centerYNorm * faceCanvas.height;
+
+            // Escala objetivo para la máscara (ajustar multiplicador si la ves muy grande/pequeña)
+            const targetMaskW = Math.max(faceWidthPx * 1.9, faceWidthPx + 30); // ancho en px
+            const targetMaskH = Math.max(faceHeightPx * 2.1, faceHeightPx + 20); // alto en px
+
+            // Suavizar centro y escala para evitar saltos guardando estado
+            if (!smoothedCenter) smoothedCenter = { x: centerX, y: centerY };
+            if (!smoothedScale) smoothedScale = { w: targetMaskW, h: targetMaskH };
+
+            // Aplicar smoothing (más responsivo: damos mayor peso al target)
+            const centerAlpha = 0.18;
+            smoothedCenter.x = smoothedCenter.x * centerAlpha + centerX * (1 - centerAlpha);
+            smoothedCenter.y = smoothedCenter.y * centerAlpha + centerY * (1 - centerAlpha);
+
+            const scaleAlpha = 0.25;
+            smoothedScale.w = smoothedScale.w * scaleAlpha + targetMaskW * (1 - scaleAlpha);
+            smoothedScale.h = smoothedScale.h * scaleAlpha + targetMaskH * (1 - scaleAlpha);
+
+            // Limpiar canvas (en coordenadas normales)
             ctx.clearRect(0, 0, faceCanvas.width, faceCanvas.height);
 
-            // IMPORTANTE: el video está "mirrored" en CSS (scaleX(-1)).
-            // Para que la máscara quede sobre la imagen espejo, dibujamos el canvas también volcado horizontalmente.
+            // IMPORTANTE: el video está "mirrored" (scaleX(-1)). Dibujamos el canvas volteado para coincidir visualmente.
             ctx.save();
             ctx.scale(-1, 1);
             ctx.translate(-faceCanvas.width, 0);
 
             try {
-                // Dibujar puntos suavizados
-                ctx.fillStyle = 'rgba(0, 230, 255, 0.95)';
-                for (let i = 0; i < prevLandmarks.length; i++) {
-                    const x = prevLandmarks[i].x * faceCanvas.width;
-                    const y = prevLandmarks[i].y * faceCanvas.height;
+                // Dibujar la mascarilla principal (elipse) centrada y escalada de forma responsiva
+                const maskW = smoothedScale.w;
+                const maskH = smoothedScale.h;
+
+                ctx.fillStyle = 'rgba(79, 195, 247, 0.72)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                ctx.lineWidth = 2;
+
+                ctx.beginPath();
+                ctx.ellipse(
+                    smoothedCenter.x,
+                    smoothedCenter.y,
+                    maskW / 2,
+                    maskH / 2,
+                    0, 0, 2 * Math.PI
+                );
+                ctx.fill();
+                ctx.stroke();
+
+                // Rayas horizontales (pliegues) — adaptadas al tamaño de la máscara
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+                ctx.lineWidth = 1.4;
+                ctx.setLineDash([6, 4]);
+
+                const pleatCount = 3;
+                for (let i = 0; i < pleatCount; i++) {
+                    const rel = (i - (pleatCount-1)/2) * 0.28; // posiciones relativas verticales
+                    const y = smoothedCenter.y + rel * maskH;
                     ctx.beginPath();
-                    ctx.arc(x, y, 2, 0, Math.PI * 2);
+                    ctx.ellipse(
+                        smoothedCenter.x,
+                        y,
+                        maskW * 0.88,
+                        maskH * 0.14,
+                        0, 0, 2 * Math.PI
+                    );
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+
+                // Puntos decorativos alrededor del borde de la máscara (proporcionales)
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+                const dotCount = 14;
+                for (let i = 0; i < dotCount; i++) {
+                    const angle = (i / dotCount) * Math.PI * 2;
+                    const px = smoothedCenter.x + Math.cos(angle) * (maskW / 2) * 0.92;
+                    const py = smoothedCenter.y + Math.sin(angle) * (maskH / 2) * 0.92;
+                    ctx.beginPath();
+                    ctx.arc(px, py, Math.max(1.6, Math.min(3, maskW * 0.0035)), 0, Math.PI * 2);
                     ctx.fill();
                 }
 
-                // Dibujar malla sutil
-                if (typeof drawConnectors === 'function' && typeof FACEMESH_TESSELATION !== 'undefined') {
-                    drawConnectors(ctx, prevLandmarks, FACEMESH_TESSELATION, { color: 'rgba(0,200,255,0.12)', lineWidth: 0.7 });
+                // Puntos pequeños alrededor de la nariz (más finos)
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                const noseX = (noseTip.x || centerXNorm) * faceCanvas.width;
+                const noseY = (noseTip.y || centerYNorm) * faceCanvas.height;
+                const noseDots = 8;
+                for (let i = 0; i < noseDots; i++) {
+                    const a = (i / noseDots) * Math.PI * 2;
+                    const px = noseX + Math.cos(a) * (maskW * 0.02 + 6);
+                    const py = noseY + Math.sin(a) * (maskH * 0.02 + 4);
+                    ctx.beginPath();
+                    ctx.arc(px, py, 1.4, 0, Math.PI * 2);
+                    ctx.fill();
                 }
 
-                // Contorno de la cara (óvalo)
-                if (typeof drawConnectors === 'function' && typeof FACEMESH_FACE_OVAL !== 'undefined') {
-                    drawConnectors(ctx, prevLandmarks, FACEMESH_FACE_OVAL, { color: 'rgba(0,200,255,0.75)', lineWidth: 1.6 });
-                }
-
-                // Ojos y labios con mayor visibilidad
-                if (typeof drawConnectors === 'function') {
-                    if (typeof FACEMESH_RIGHT_EYE !== 'undefined') drawConnectors(ctx, prevLandmarks, FACEMESH_RIGHT_EYE, { color: 'rgba(0,255,150,0.95)', lineWidth: 1.2 });
-                    if (typeof FACEMESH_LEFT_EYE !== 'undefined') drawConnectors(ctx, prevLandmarks, FACEMESH_LEFT_EYE, { color: 'rgba(0,255,150,0.95)', lineWidth: 1.2 });
-                    if (typeof FACEMESH_LIPS !== 'undefined') drawConnectors(ctx, prevLandmarks, FACEMESH_LIPS, { color: 'rgba(255,140,140,0.95)', lineWidth: 1.2 });
-                }
-
-                // Dibujar línea central de la nariz para dar "anclaje"
-                const noseIndices = [1, 2, 98, 327];
-                ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+                // Líneas de conexión desde centro hacia puntos clave (sutil)
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
                 ctx.lineWidth = 1;
-                ctx.beginPath();
-                for (let i = 0; i < noseIndices.length; i++) {
-                    const p = prevLandmarks[noseIndices[i]];
-                    if (!p) continue;
-                    const x = p.x * faceCanvas.width;
-                    const y = p.y * faceCanvas.height;
-                    if (i === 0) ctx.moveTo(x, y);
-                    else ctx.lineTo(x, y);
-                }
-                ctx.stroke();
+                const anchors = [leftCheek, rightCheek, noseTip, chin];
+                anchors.forEach(p => {
+                    if (!p) return;
+                    const px = p.x * faceCanvas.width;
+                    const py = p.y * faceCanvas.height;
+                    ctx.beginPath();
+                    ctx.moveTo(smoothedCenter.x, smoothedCenter.y);
+                    ctx.lineTo(px, py);
+                    ctx.stroke();
+                });
 
-                // Rayas limpias que siguen el contorno facial (3 niveles)
-                if (typeof FACEMESH_FACE_OVAL !== 'undefined') {
-                    // crear lista de puntos del óvalo en píxeles
-                    const ovalPts = [];
-                    for (let i = 0; i < FACEMESH_FACE_OVAL.length; i++) {
-                        const entry = FACEMESH_FACE_OVAL[i];
-                        // entry puede ser par [a,b] o un índice; tomamos el primer valor si es array
-                        const idx = Array.isArray(entry) ? entry[0] : entry;
-                        const p = prevLandmarks[idx];
-                        if (p) ovalPts.push({ x: p.x * faceCanvas.width, y: p.y * faceCanvas.height });
-                    }
-                    // calcular punto central (nariz) para desplazar
-                    const nose = prevLandmarks[1] || prevLandmarks[Math.floor(prevLandmarks.length/2)];
-                    const cx = (nose ? nose.x * faceCanvas.width : faceCanvas.width / 2);
-                    const cy = (nose ? nose.y * faceCanvas.height : faceCanvas.height / 2);
-
-                    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
-                    ctx.lineWidth = 1;
-                    ctx.setLineDash([6,4]);
-
-                    // dibujar 3 curvas internas
-                    [0.06, 0.11, 0.17].forEach(offset => {
-                        ctx.beginPath();
-                        for (let i = 0; i < ovalPts.length; i++) {
-                            const p = ovalPts[i];
-                            // desplazar hacia el centro (cx,cy) por "offset" fraccional
-                            const tx = p.x + (cx - p.x) * offset;
-                            const ty = p.y + (cy - p.y) * offset;
-                            if (i === 0) ctx.moveTo(tx, ty);
-                            else ctx.lineTo(tx, ty);
-                        }
-                        ctx.closePath();
-                        ctx.stroke();
-                    });
-
-                    ctx.setLineDash([]);
-                }
+                // Opcional: dibujar puntos de landmark (para debug/afinación) — comentado por defecto
+                // ctx.fillStyle = 'rgba(0,255,200,0.9)';
+                // prevLandmarks.forEach(p => { ctx.beginPath(); ctx.arc(p.x*faceCanvas.width, p.y*faceCanvas.height, 1.2, 0, 2*Math.PI); ctx.fill(); });
 
             } catch (e) {
                 console.warn('Error al dibujar mascarilla:', e);
@@ -718,7 +763,7 @@
                 ctx.restore(); // restaurar transform
             }
 
-            // Marcar que hay cara detectada y mostrar indicador
+            // Mostrar indicador
             isFaceDetected = true;
             maskIndicator.style.display = 'block';
         }
