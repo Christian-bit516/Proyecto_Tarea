@@ -66,8 +66,8 @@
     .activity-table th,.activity-table td{padding:12px;text-align:center;border-bottom:1px solid #e9ecef}
     .activity-table th{background:linear-gradient(135deg,var(--accent1),var(--accent2));color:#fff;font-weight:700}
     .activity-table tr:hover{background:#f8f9fa}
-    .status-active{color:#00bfff;font-weight:700} /* En Progreso celeste */
-    .status-inactive{color:#1b263b;font-weight:700} /* Completadas negro */
+    .status-active{color:#00bfff;font-weight:700} 
+    .status-inactive{color:#1b263b;font-weight:700} 
     .empty-state{text-align:center;padding:32px;color:var(--muted)}
     .empty-state i{font-size:3.6em;margin-bottom:10px;color:#dfe4ea}
     @media (max-width:900px){.charts-grid{grid-template-columns:1fr}}
@@ -167,15 +167,6 @@
 
     const convertirHoraAMinutos = (hhmm) => {
       if (!hhmm) return null;
-      const match = hhmm.match(/(\d+):(\d+)(?::\d+)?\s*([ap]\.?m\.?)/i);
-      if(match){
-        let h = parseInt(match[1],10);
-        const m = parseInt(match[2],10);
-        const ampm = match[3].toLowerCase();
-        if(ampm.includes('p') && h < 12) h += 12;
-        if(ampm.includes('a') && h === 12) h = 0;
-        return h*60 + m;
-      }
       const parts = hhmm.split(':').map(Number);
       if(parts.length < 2) return null;
       return parts[0]*60 + parts[1];
@@ -202,7 +193,6 @@
     const createCharts=(registros)=>{
       destroyCharts();
 
-      // Gráfico de comparación duración corta vs larga
       const statusCtx=document.getElementById('statusChart').getContext('2d');
       let corta=0, larga=0;
       registros.forEach(r=>{
@@ -235,7 +225,6 @@
         }
       });
 
-      // Por día
       const ultimos7=[...Array(7)].map((_,i)=>{ const d=new Date(); d.setDate(d.getDate()-(6-i)); return d; });
       const diasISO=ultimos7.map(d=>toISODate(d));
       const labels=ultimos7.map(d=>d.toLocaleDateString(undefined,{month:'2-digit',day:'2-digit'}));
@@ -279,7 +268,17 @@
 
     const render=()=>{
       const todos=getRegistros();
-      const filtrados=todos; // mostramos todos
+      const desdeInput=parseFechaFlexible(document.getElementById('desde').value);
+      const hastaInput=parseFechaFlexible(document.getElementById('hasta').value);
+
+      const filtrados=todos.filter(r=>{
+        const fechaR=parseFechaFlexible(r.fecha);
+        if(!fechaR) return false;
+        if(desdeInput && fechaR < desdeInput) return false;
+        if(hastaInput && fechaR > hastaInput) return false;
+        return true;
+      });
+
       createCharts(filtrados);
       showRecentActivity(filtrados);
     };
@@ -297,4 +296,5 @@
   </script>
 </body>
 </html>
+
 
