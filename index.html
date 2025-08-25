@@ -354,7 +354,7 @@
                 grid-template-columns: 1fr;
                 gap: 30px;
             }
-            
+
             .camera-box, .info-panel {
                 padding: 25px;
             }
@@ -372,19 +372,19 @@
             body {
                 padding: 15px;
             }
-            
+
             .camera-header h2 {
                 font-size: 1.8em;
             }
-            
+
             #webcam-container {
                 height: 300px;
             }
-            
+
             .info-panel {
                 padding: 20px;
             }
-            
+
             .user-name {
                 font-size: 1.8em;
             }
@@ -398,7 +398,7 @@
                 <h2>Cámara de Reconocimiento</h2>
                 <p>Mire directamente a la cámara para registrar su ingreso</p>
             </div>
-            
+
             <div id="webcam-container">
                 <video id="webcam-video" autoplay playsinline></video>
                 <canvas id="face-canvas"></canvas>
@@ -474,13 +474,13 @@
         function loadUserInfo() {
             const userName = localStorage.getItem('usuarioNombre') || 'Usuario';
             document.getElementById('user-display-name').textContent = userName;
-            
+
             const savedRegistros = localStorage.getItem('registrosHorarios');
             if (savedRegistros) {
                 registros = JSON.parse(savedRegistros);
                 updateRecordsTable();
             }
-            
+
             const sistemaEstado = localStorage.getItem('sistemaEstado');
             if (sistemaEstado === 'ingresado') {
                 usuarioEnSistema = true;
@@ -491,7 +491,7 @@
                 showLoginButton();
                 updateStatus('Sistema listo para reconocimiento facial');
             }
-            
+
             return userName;
         }
 
@@ -506,21 +506,21 @@
             const now = new Date();
             const fecha = now.toLocaleDateString();
             const horaEntrada = now.toLocaleTimeString();
-            
+
             registros.unshift({
                 fecha: fecha,
                 entrada: horaEntrada,
                 salida: "PENDIENTE",
                 estado: "activo"
             });
-            
+
             if (registros.length > MAX_REGISTROS) {
                 registros = registros.slice(0, MAX_REGISTROS);
             }
-            
+
             localStorage.setItem('registrosHorarios', JSON.stringify(registros));
             updateRecordsTable();
-            
+
             return now;
         }
 
@@ -528,7 +528,7 @@
         function addExitRecord() {
             const now = new Date();
             const horaSalida = now.toLocaleTimeString();
-            
+
             for (let i = 0; i < registros.length; i++) {
                 if (registros[i].estado === "activo" && registros[i].salida === "PENDIENTE") {
                     registros[i].salida = horaSalida;
@@ -536,10 +536,10 @@
                     break;
                 }
             }
-            
+
             localStorage.setItem('registrosHorarios', JSON.stringify(registros));
             updateRecordsTable();
-            
+
             return now;
         }
 
@@ -547,7 +547,7 @@
         function updateRecordsTable() {
             const tableBody = document.getElementById('records-table-body');
             tableBody.innerHTML = '';
-            
+
             registros.forEach((registro) => {
                 const row = document.createElement('tr');
                 row.innerHTML = `
@@ -592,8 +592,7 @@
             document.getElementById('status').textContent = message;
         }
 
-        // Función para dibujar mascarilla con rayitos y puntos
-        // Reescrita para: ajustarse correctamente al rostro, evitar círculo gigante y reducir retraso.
+        // Mejorada: función para dibujar mascarilla con rayitos y puntos ajustada al rostro y responsiva.
         let prevLandmarks = [];
         let smoothedCenter = null;
         let smoothedScale = null;
@@ -607,7 +606,7 @@
         function drawFacialMask(landmarks, ctx) {
             if (!landmarks) return;
 
-            // 1) Asegurar que el canvas use el tamaño del video
+            // Asegurar que el canvas coincida con el video real (mirrored)
             const vW = videoElement.videoWidth || faceCanvas.clientWidth || 640;
             const vH = videoElement.videoHeight || faceCanvas.clientHeight || 480;
             if (faceCanvas.width !== vW || faceCanvas.height !== vH) {
@@ -615,8 +614,8 @@
                 faceCanvas.height = vH;
             }
 
-            // 2) Suavizado ligero (responsivo)
-            const alpha = 0.12; // menor -> más responsivo, menos retraso
+            // Suavizado ligero para evitar retraso grande pero mantener fluidez
+            const alpha = 0.10; // menor = más responsivo
             if (prevLandmarks.length !== landmarks.length) {
                 prevLandmarks = landmarks.map(p => ({ x: p.x, y: p.y, z: p.z || 0 }));
             } else {
@@ -627,117 +626,162 @@
                 }
             }
 
-            // 3) Puntos clave suavizados
+            // Puntos clave (uso índices estándar de MediaPipe)
             const noseTip = prevLandmarks[1] || prevLandmarks[0];
-            const chin = prevLandmarks[152] || prevLandmarks[Math.floor(prevLandmarks.length*0.9)];
-            const leftCheek = prevLandmarks[234] || prevLandmarks[Math.floor(prevLandmarks.length*0.25)];
-            const rightCheek = prevLandmarks[454] || prevLandmarks[Math.floor(prevLandmarks.length*0.75)];
+            const chin = prevLandmarks[152] || prevLandmarks[Math.floor(prevLandmarks.length * 0.9)];
+            const leftCheek = prevLandmarks[234] || prevLandmarks[Math.floor(prevLandmarks.length * 0.25)];
+            const rightCheek = prevLandmarks[454] || prevLandmarks[Math.floor(prevLandmarks.length * 0.75)];
 
-            // 4) Medidas en pixeles usando landmarks suavizados
-            const faceWpx = distPx(leftCheek, rightCheek, faceCanvas.width, faceCanvas.height);
-            const faceHpx = distPx(noseTip, chin, faceCanvas.width, faceCanvas.height);
+            // Medidas en pixeles
+            const faceWpx = isFinite(distPx(leftCheek, rightCheek, faceCanvas.width, faceCanvas.height)) ? distPx(leftCheek, rightCheek, faceCanvas.width, faceCanvas.height) : faceCanvas.width * 0.35;
+            const faceHpx = isFinite(distPx(noseTip, chin, faceCanvas.width, faceCanvas.height)) ? distPx(noseTip, chin, faceCanvas.width, faceCanvas.height) : faceCanvas.height * 0.25;
 
-            // Evitar valores 0 o NaN
-            const safeFaceWpx = isFinite(faceWpx) && faceWpx > 10 ? faceWpx : faceCanvas.width * 0.35;
-            const safeFaceHpx = isFinite(faceHpx) && faceHpx > 10 ? faceHpx : faceCanvas.height * 0.25;
-
-            // Centro normalizado y en pixeles
+            // Centro
             const centerXNorm = ((leftCheek.x + rightCheek.x) / 2) || 0.5;
             const centerYNorm = ((noseTip.y + chin.y) / 2) || 0.55;
             const centerX = centerXNorm * faceCanvas.width;
             const centerY = centerYNorm * faceCanvas.height;
 
-            // 5) Escala objetivo (ajustada, no exagerada)
-            const targetMaskW = safeFaceWpx * 1.08; // ligero aumento sobre ancho mejillas
-            const targetMaskH = safeFaceHpx * 1.12; // cubrir nariz -> mentón un poco más
+            // Escala objetivo
+            const targetMaskW = faceWpx * 1.04;
+            const targetMaskH = faceHpx * 1.08;
 
-            // 6) Suavizar centro y escala para estabilidad visual
+            // Inicializar suavizado
             if (!smoothedCenter) smoothedCenter = { x: centerX, y: centerY };
             if (!smoothedScale) smoothedScale = { w: targetMaskW, h: targetMaskH };
 
-            const centerAlpha = 0.2;
+            // Suavizar
+            const centerAlpha = 0.18;
             smoothedCenter.x = smoothedCenter.x * centerAlpha + centerX * (1 - centerAlpha);
             smoothedCenter.y = smoothedCenter.y * centerAlpha + centerY * (1 - centerAlpha);
-
-            const scaleAlpha = 0.22;
+            const scaleAlpha = 0.2;
             smoothedScale.w = smoothedScale.w * scaleAlpha + targetMaskW * (1 - scaleAlpha);
             smoothedScale.h = smoothedScale.h * scaleAlpha + targetMaskH * (1 - scaleAlpha);
 
-            // 7) Dibujar: limpiar y aplicar espejo (coincide con video transform)
+            // Limpiar y aplicar espejo para que coincida con el video transform
             ctx.clearRect(0, 0, faceCanvas.width, faceCanvas.height);
             ctx.save();
             ctx.scale(-1, 1);
             ctx.translate(-faceCanvas.width, 0);
 
             try {
-                // Base de la mascarilla (óvalo) usando dimensiones suavizadas
-                const maskW = Math.max(30, smoothedScale.w); // mínimos para evitar demasiado pequeño
-                const maskH = Math.max(20, smoothedScale.h);
-
-                ctx.fillStyle = 'rgba(79, 195, 247, 0.72)';
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-                ctx.lineWidth = Math.max(1, Math.min(3, maskW * 0.008));
-
-                ctx.beginPath();
-                ctx.ellipse(
-                    smoothedCenter.x,
-                    smoothedCenter.y,
-                    maskW / 2,
-                    maskH / 2,
-                    0, 0, 2 * Math.PI
-                );
-                ctx.fill();
-                ctx.stroke();
-
-                // Rayitas (pliegues) — adaptadas al tamaño real para que no sobresalgan
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.62)';
-                ctx.lineWidth = Math.max(0.9, maskW * 0.0035);
-                ctx.setLineDash([6, 4]);
-
-                const pleatCount = 3;
-                for (let i = 0; i < pleatCount; i++) {
-                    const rel = (i - (pleatCount - 1) / 2) * 0.28;
-                    const y = smoothedCenter.y + rel * maskH;
+                // Dibujar puntos (opcional, mantiene el diseño anterior con puntos)
+                ctx.fillStyle = 'rgba(0, 230, 255, 0.85)';
+                for (let i = 0; i < Math.min(prevLandmarks.length, 468); i++) {
+                    const p = prevLandmarks[i];
+                    const x = p.x * faceCanvas.width;
+                    const y = p.y * faceCanvas.height;
                     ctx.beginPath();
-                    ctx.ellipse(
-                        smoothedCenter.x,
-                        y,
-                        maskW * 0.84,
-                        maskH * 0.13,
-                        0, 0, 2 * Math.PI
-                    );
+                    ctx.arc(x, y, 1.2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Máscara base: forma ajustada mediante FACEMESH_FACE_OVAL puntos si están disponibles
+                let ovalPts = [];
+                if (typeof FACEMESH_FACE_OVAL !== 'undefined') {
+                    for (let i = 0; i < FACEMESH_FACE_OVAL.length; i++) {
+                        const entry = FACEMESH_FACE_OVAL[i];
+                        const idx = Array.isArray(entry) ? entry[0] : entry;
+                        const p = prevLandmarks[idx];
+                        if (p) ovalPts.push({ x: p.x * faceCanvas.width, y: p.y * faceCanvas.height });
+                    }
+                }
+
+                // Si no hay ovalPts, fallback a ellipse basada en center+scale
+                if (ovalPts.length < 6) {
+                    // base oval using ellipse
+                    const maskW = Math.max(30, smoothedScale.w);
+                    const maskH = Math.max(20, smoothedScale.h);
+                    ctx.fillStyle = 'rgba(79, 195, 247, 0.72)';
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                    ctx.lineWidth = Math.max(1, Math.min(3, maskW * 0.008));
+                    ctx.beginPath();
+                    ctx.ellipse(smoothedCenter.x, smoothedCenter.y, maskW / 2, maskH / 2, 0, 0, 2 * Math.PI);
+                    ctx.fill();
+                    ctx.stroke();
+                } else {
+                    // create a smooth polygon path following face oval, then fill & stroke
+                    ctx.fillStyle = 'rgba(79, 195, 247, 0.72)';
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                    ctx.lineWidth = 1.6;
+                    ctx.beginPath();
+                    // move to first
+                    ctx.moveTo(ovalPts[0].x, ovalPts[0].y);
+                    for (let i = 1; i < ovalPts.length; i++) {
+                        const p = ovalPts[i];
+                        ctx.lineTo(p.x, p.y);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
                     ctx.stroke();
                 }
+
+                // Rayitas (pliegues) — curvas paralelas al óvalo/forma, adaptadas al tamaño
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.62)';
+                ctx.lineWidth = Math.max(0.8, (smoothedScale.w) * 0.0032);
+                ctx.setLineDash([6, 4]);
+
+                // Generate internal curves using ovalPts if available; else use ellipses
+                if (ovalPts.length >= 6) {
+                    const nose = prevLandmarks[1] || { x: 0.5, y: 0.5 };
+                    const nx = nose.x * faceCanvas.width;
+                    const ny = nose.y * faceCanvas.height;
+                    [0.06, 0.11, 0.17].forEach(offset => {
+                        ctx.beginPath();
+                        for (let i = 0; i < ovalPts.length; i += 2) {
+                            const p = ovalPts[i];
+                            const tx = p.x + (nx - p.x) * offset;
+                            const ty = p.y + (ny - p.y) * offset;
+                            if (i === 0) ctx.moveTo(tx, ty);
+                            else ctx.lineTo(tx, ty);
+                        }
+                        ctx.closePath();
+                        ctx.stroke();
+                    });
+                } else {
+                    // fallback: draw 3 horizontal ellipses relative to smoothed center
+                    const maskW = Math.max(30, smoothedScale.w);
+                    const maskH = Math.max(20, smoothedScale.h);
+                    for (let i = 0; i < 3; i++) {
+                        const rel = (i - 1) * 0.28;
+                        const y = smoothedCenter.y + rel * maskH;
+                        ctx.beginPath();
+                        ctx.ellipse(smoothedCenter.x, y, maskW * 0.84, maskH * 0.13, 0, 0, 2 * Math.PI);
+                        ctx.stroke();
+                    }
+                }
+
                 ctx.setLineDash([]);
 
                 // Puntos decorativos alrededor del borde (proporcionales)
                 ctx.fillStyle = 'rgba(255,255,255,0.88)';
                 const dotCount = 12;
+                const dotW = Math.max(1.2, Math.min(2.4, smoothedScale.w * 0.0032));
                 for (let i = 0; i < dotCount; i++) {
                     const angle = (i / dotCount) * Math.PI * 2;
-                    const px = smoothedCenter.x + Math.cos(angle) * (maskW / 2) * 0.9;
-                    const py = smoothedCenter.y + Math.sin(angle) * (maskH / 2) * 0.9;
+                    const px = smoothedCenter.x + Math.cos(angle) * (smoothedScale.w / 2) * 0.9;
+                    const py = smoothedCenter.y + Math.sin(angle) * (smoothedScale.h / 2) * 0.9;
                     ctx.beginPath();
-                    ctx.arc(px, py, Math.max(1.2, Math.min(2.6, maskW * 0.003)), 0, Math.PI * 2);
+                    ctx.arc(px, py, dotW, 0, Math.PI * 2);
                     ctx.fill();
                 }
 
                 // Puntos pequeños alrededor de la nariz (sutil)
                 ctx.fillStyle = 'rgba(255,255,255,0.62)';
-                const noseX = (noseTip.x || centerXNorm) * faceCanvas.width;
-                const noseY = (noseTip.y || centerYNorm) * faceCanvas.height;
+                const noseX = (noseTip.x || 0.5) * faceCanvas.width;
+                const noseY = (noseTip.y || 0.5) * faceCanvas.height;
                 const noseDots = 7;
                 for (let i = 0; i < noseDots; i++) {
                     const a = (i / noseDots) * Math.PI * 2;
-                    const px = noseX + Math.cos(a) * (maskW * 0.02 + 5);
-                    const py = noseY + Math.sin(a) * (maskH * 0.02 + 3);
+                    const px = noseX + Math.cos(a) * (Math.max(6, smoothedScale.w * 0.02));
+                    const py = noseY + Math.sin(a) * (Math.max(3, smoothedScale.h * 0.02));
                     ctx.beginPath();
-                    ctx.arc(px, py, 1.2, 0, Math.PI * 2);
+                    ctx.arc(px, py, 1.1, 0, Math.PI * 2);
                     ctx.fill();
                 }
 
                 // Conexiones sutiles hacia puntos clave para "anclar"
-                ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+                ctx.strokeStyle = 'rgba(255,255,255,0.28)';
                 ctx.lineWidth = 1;
                 const anchors = [leftCheek, rightCheek, noseTip, chin];
                 anchors.forEach(p => {
@@ -834,7 +878,7 @@
 
             // Cargar información del usuario
             loadUserInfo();
-            
+
             // Actualizar hora cada segundo
             updateCurrentTime();
             setInterval(updateCurrentTime, 1000);
@@ -857,7 +901,7 @@
             try {
                 // Inicializar Face Mesh
                 await initFaceMesh();
-                
+
                 // Iniciar cámara
                 await startCamera();
 
@@ -875,26 +919,26 @@
             isCountingDown = true;
             const countdownSection = document.getElementById('countdown-section');
             countdownSection.style.display = 'block';
-            
+
             let count = 3;
             document.getElementById('countdown-number').textContent = count;
-            
+
             countdownInterval = setInterval(() => {
                 count--;
                 document.getElementById('countdown-number').textContent = count;
-                
+
                 if (count <= 0) {
                     clearInterval(countdownInterval);
                     isCountingDown = false;
-                    
+
                     addEntryRecord();
                     usuarioEnSistema = true;
                     localStorage.setItem('sistemaEstado', 'ingresado');
-                    
+
                     showDashboardButton();
                     showLogoutButton();
                     countdownSection.style.display = 'none';
-                    
+
                     updateStatus('✅ Ingreso registrado correctamente');
                     recognitionCount = 0;
                 }
